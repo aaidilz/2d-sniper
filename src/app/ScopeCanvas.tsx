@@ -1,12 +1,15 @@
 "use client";
+
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { RECOIL_POWER, RECOIL_SIDE, RECOIL_UP_VARIANCE, SHAKE_X, SHAKE_Y, SHAKE_SPEED, SCREEN_SHAKE_POWER, SCREEN_SHAKE_DECAY } from "./config";
+import { PARALLAX_LAYERS } from "./parallaxLayers";
 
 export default function ScopeCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scopeImgRef = useRef<HTMLImageElement | null>(null);
-  const bgImgRef = useRef<HTMLImageElement | null>(null);
+  // Parallax layer refs
+  const parallaxImgsRef = useRef<HTMLImageElement[]>([]);
 
   // Scope position state
   const scopePos = useRef({ x: 400, y: 300 });
@@ -20,10 +23,13 @@ export default function ScopeCanvas() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Load background image
-    const bgImg = new window.Image();
-    bgImg.src = "/bg.png";
-    bgImgRef.current = bgImg;
+
+    // Load parallax background layers
+    parallaxImgsRef.current = PARALLAX_LAYERS.map((layer) => {
+      const img = new window.Image();
+      img.src = layer.src;
+      return img;
+    });
 
     // Load scope image
     const scopeImg = new window.Image();
@@ -37,7 +43,7 @@ export default function ScopeCanvas() {
     // Screen shake state
     let shakePower = 0;
 
-    // Draw function with breathing shake and screen shake
+    // Draw function with parallax background
     const draw = () => {
       if (!canvas || !ctx) return;
       // Screen shake offset
@@ -48,12 +54,41 @@ export default function ScopeCanvas() {
       }
       ctx.save();
       ctx.translate(shakeOffsetX, shakeOffsetY);
-      if (bgImg.complete) {
-        ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
-      } else {
+
+      // Parallax effect: offset each layer based on scopePos
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const dx = scopePos.current.x - centerX;
+      const dy = scopePos.current.y - centerY;
+
+      // Draw each parallax layer from back to front, with scale up (1.2x)
+      const scale = 1.2;
+      const scaledW = canvas.width * scale;
+      const scaledH = canvas.height * scale;
+      for (let i = 0; i < PARALLAX_LAYERS.length; i++) {
+        const img = parallaxImgsRef.current[i];
+        const { speed } = PARALLAX_LAYERS[i];
+        if (img && img.complete) {
+          // Offset so center stays in place, but layer is larger
+          const offsetX = -dx * speed - (scaledW - canvas.width) / 2;
+          const offsetY = -dy * speed - (scaledH - canvas.height) / 2;
+          ctx.drawImage(
+            img,
+            offsetX,
+            offsetY,
+            scaledW,
+            scaledH
+          );
+        }
+      }
+
+      // If no layer loaded, fallback fill
+      if (!parallaxImgsRef.current[0] || !parallaxImgsRef.current[0].complete) {
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
+
+      // Draw scope
       if (scopeImg.complete) {
         const w = scopeImg.width;
         const h = scopeImg.height;
@@ -132,23 +167,25 @@ export default function ScopeCanvas() {
       tickerId = requestAnimationFrame(animateBreath);
     };
 
-    // Wait for both images to load before enabling events
+
+    // Wait for all parallax layers and scope image to load before enabling events
     let loaded = 0;
+    const totalToLoad = PARALLAX_LAYERS.length + 1;
     const tryEnable = () => {
       loaded++;
-      if (loaded === 2) {
-        // Draw initial background
+      if (loaded === totalToLoad) {
         draw();
         canvas.addEventListener("mousemove", handleMouseMove);
         canvas.addEventListener("mousedown", handleMouseDown);
-        // Start breathing shake
         breathing = true;
         animateBreath();
       }
     };
-    bgImg.onload = tryEnable;
+    parallaxImgsRef.current.forEach((img) => {
+      img.onload = tryEnable;
+      if (img.complete) tryEnable();
+    });
     scopeImg.onload = tryEnable;
-    if (bgImg.complete) tryEnable();
     if (scopeImg.complete) tryEnable();
 
     return () => {
