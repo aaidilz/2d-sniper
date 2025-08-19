@@ -30,6 +30,21 @@ export default function ScopeCanvas() {
   const state = useRef<State>("idle");
   const reloadRotateDir = useRef(1);
 
+  // Target type
+  type Target = {
+    x: number;
+    y: number;
+    layer: number; // 1 = paling belakang, 4 = paling depan
+    radius: number;
+  };
+  // Target state
+  const targetRef = useRef<Target>({
+    x: 400,
+    y: 300,
+    layer: 2, // default di antara layer 2 dan 3
+    radius: 28,
+  });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -74,11 +89,39 @@ export default function ScopeCanvas() {
     const RELOAD_TIME = 0.5; // detik
     const RELOAD_DROP = 40; // seberapa jauh scope turun saat reload
 
+    // Fungsi untuk random posisi target hanya di area non-transparan layer PNG
+    function randomizeTargetOnOpaqueArea(layerIdx: number, radius: number) {
+      const img = parallaxImgsRef.current[layerIdx];
+      if (!img || !img.complete) return { x: 400, y: 300 };
+      // Buat canvas offscreen
+      const off = document.createElement('canvas');
+      off.width = 800;
+      off.height = 600;
+      const offCtx = off.getContext('2d');
+      if (!offCtx) return { x: 400, y: 300 };
+      // Gambar layer ke offscreen (tanpa parallax, posisi default)
+      offCtx.drawImage(img, 0, 0, 800, 600);
+      let tries = 0;
+      while (tries < 1000) {
+        const x = Math.random() * (800 - 2 * radius) + radius;
+        const y = Math.random() * (600 - 2 * radius) + radius;
+        // Cek alpha di tengah target
+        const pixel = offCtx.getImageData(x, y, 1, 1).data;
+        if (pixel[3] > 32) {
+          return { x, y };
+        }
+        tries++;
+      }
+      // Fallback jika gagal
+      return { x: 400, y: 300 };
+    }
+
     // Fungsi gambar parallax
     function drawParallax(ctx: CanvasRenderingContext2D, dx: number, dy: number, canvas: HTMLCanvasElement) {
       const scale = 1.2;
       const scaledW = canvas.width * scale;
       const scaledH = canvas.height * scale;
+      const target = targetRef.current;
       for (let i = 0; i < PARALLAX_LAYERS.length; i++) {
         const img = parallaxImgsRef.current[i];
         const { speed } = PARALLAX_LAYERS[i];
@@ -86,6 +129,21 @@ export default function ScopeCanvas() {
           const offsetX = -dx * speed - (scaledW - canvas.width) / 2;
           const offsetY = -dy * speed - (scaledH - canvas.height) / 2;
           ctx.drawImage(img, offsetX, offsetY, scaledW, scaledH);
+        }
+        // Gambar target setelah layer ke-1 (index 1), jadi di antara layer 2 dan 3
+        if (i === 1) {
+          // Target ikut parallax sesuai layer target
+          const tSpeed = PARALLAX_LAYERS[target.layer].speed;
+          const tOffsetX = -dx * tSpeed - (scaledW - canvas.width) / 2;
+          const tOffsetY = -dy * tSpeed - (scaledH - canvas.height) / 2;
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(target.x + tOffsetX, target.y + tOffsetY, target.radius, 0, 2 * Math.PI);
+          ctx.fillStyle = "rgba(220,40,40,0.85)";
+          ctx.shadowColor = "#fff";
+          ctx.shadowBlur = 8;
+          ctx.fill();
+          ctx.restore();
         }
       }
     }
@@ -184,6 +242,8 @@ export default function ScopeCanvas() {
         duration: 0.09,
         onUpdate: draw,
         onComplete: () => {
+          // Setelah recoil, shake direset agar tidak terus shake saat firing
+          shakePower = 0;
           // Setelah recoil, kembali ke idle (scope bisa digerakkan)
           state.current = "idle";
           recoilOrigin.current.x = mouseTarget.current.x;
@@ -212,6 +272,13 @@ export default function ScopeCanvas() {
                 shakePower = 0;
                 recoilOrigin.current.x = mouseTarget.current.x;
                 recoilOrigin.current.y = mouseTarget.current.y;
+                // Randomisasi layer target (1 atau 2, antara layer 2 dan 3)
+                const newLayer = 1 + Math.floor(Math.random() * 2);
+                targetRef.current.layer = newLayer;
+                // Randomisasi posisi hanya di area non-transparan layer tersebut
+                const pos = randomizeTargetOnOpaqueArea(newLayer, targetRef.current.radius);
+                targetRef.current.x = pos.x;
+                targetRef.current.y = pos.y;
               },
             });
           }, 1000); // delay singkat agar transisi terasa natural
