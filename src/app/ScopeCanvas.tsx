@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
-import { RECOIL_POWER, RECOIL_SIDE, RECOIL_UP_VARIANCE, SHAKE_X, SHAKE_Y, SHAKE_SPEED } from "./config";
+import { RECOIL_POWER, RECOIL_SIDE, RECOIL_UP_VARIANCE, SHAKE_X, SHAKE_Y, SHAKE_SPEED, SCREEN_SHAKE_POWER, SCREEN_SHAKE_DECAY } from "./config";
 
 export default function ScopeCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -11,6 +11,7 @@ export default function ScopeCanvas() {
   // Scope position state
   const scopePos = useRef({ x: 400, y: 300 });
   const recoilOrigin = useRef({ x: 400, y: 300 });
+  const mouseTarget = useRef({ x: 400, y: 300 });
   const animating = useRef(false);
 
   useEffect(() => {
@@ -33,9 +34,20 @@ export default function ScopeCanvas() {
     let breathing = true;
     let breathTime = 0;
 
-    // Draw function with breathing shake
+    // Screen shake state
+    let shakePower = 0;
+
+    // Draw function with breathing shake and screen shake
     const draw = () => {
       if (!canvas || !ctx) return;
+      // Screen shake offset
+      let shakeOffsetX = 0, shakeOffsetY = 0;
+      if (shakePower > 0) {
+        shakeOffsetX = (Math.random() - 0.5) * shakePower;
+        shakeOffsetY = (Math.random() - 0.5) * shakePower;
+      }
+      ctx.save();
+      ctx.translate(shakeOffsetX, shakeOffsetY);
       if (bgImg.complete) {
         ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
       } else {
@@ -57,17 +69,21 @@ export default function ScopeCanvas() {
           scopePos.current.y + offsetY - h / 2
         );
       }
+      ctx.restore();
     };
 
     // Mouse move handler
     const handleMouseMove = (e: MouseEvent) => {
-      if (animating.current) return; // Disable move during recoil
       const rect = canvas.getBoundingClientRect();
-      scopePos.current.x = e.clientX - rect.left;
-      scopePos.current.y = e.clientY - rect.top;
-      recoilOrigin.current.x = scopePos.current.x;
-      recoilOrigin.current.y = scopePos.current.y;
-      draw();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      mouseTarget.current.x = x;
+      mouseTarget.current.y = y;
+      if (!animating.current) {
+        // Do not snap instantly, let smooth follow handle it
+        recoilOrigin.current.x = x;
+        recoilOrigin.current.y = y;
+      }
     };
 
     // Recoil handler with sound
@@ -78,6 +94,8 @@ export default function ScopeCanvas() {
       audio.currentTime = 0;
       audio.play();
       animating.current = true;
+      // Start screen shake
+      shakePower = SCREEN_SHAKE_POWER;
       // Simulate recoil: up and random left/right
       const recoilY = recoilOrigin.current.y - RECOIL_POWER - Math.random() * RECOIL_UP_VARIANCE;
       const recoilX = recoilOrigin.current.x + (Math.random() - 0.5) * RECOIL_SIDE;
@@ -87,24 +105,29 @@ export default function ScopeCanvas() {
         duration: 0.09,
         onUpdate: draw,
         onComplete: () => {
-          gsap.to(scopePos.current, {
-            x: recoilOrigin.current.x,
-            y: recoilOrigin.current.y,
-            duration: 0.25,
-            ease: "power2.out",
-            onUpdate: draw,
-            onComplete: () => {
-              animating.current = false;
-            },
-          });
+          // After recoil, enable smooth follow
+          recoilOrigin.current.x = mouseTarget.current.x;
+          recoilOrigin.current.y = mouseTarget.current.y;
+          animating.current = false;
         },
       });
     };
 
-    // Animate breathing shake
+    // Animate breathing shake and smooth follow
     let tickerId: number | null = null;
     const animateBreath = () => {
       breathTime += SHAKE_SPEED;
+      // Animate screen shake decay
+      if (shakePower > 0) {
+        shakePower *= SCREEN_SHAKE_DECAY;
+        if (shakePower < 0.5) shakePower = 0;
+      }
+      // Smooth follow to mouseTarget if not animating
+      if (!animating.current) {
+        // Lerp to mouseTarget
+        scopePos.current.x += (mouseTarget.current.x - scopePos.current.x) * 0.18;
+        scopePos.current.y += (mouseTarget.current.y - scopePos.current.y) * 0.18;
+      }
       draw();
       tickerId = requestAnimationFrame(animateBreath);
     };
